@@ -3,7 +3,7 @@
  * Plugin Name: WordPress Migrator
  * Plugin URI: https://rickconlee.com/wordpress-migrator
  * Description: This plugin allows you to migrate your site between two different WordPress installs. It is intended for migrating your wordpress site to a new server. 
- * Version: 1.1-dev
+ * Version: 1.1
  * Author: Rick Conlee
  * Author URI: https://rickconlee.com
  * License: GPLv2 or later
@@ -130,7 +130,10 @@ function wordpress_migrator_admin_menu() {
 function wordpress_migrator_admin_page() {
     $uploads_dir = wp_upload_dir()['basedir'];
     $backup_dir = $uploads_dir . '/full-site-backup';
-    $backup_files = glob($backup_dir . '/*.{zip,sql}', GLOB_BRACE);
+    $backup_files = array_merge(
+        glob($backup_dir . '/*.zip'),
+        glob($backup_dir . '/*.sql')
+    );
 
     ?>
     <div class="wrap">
