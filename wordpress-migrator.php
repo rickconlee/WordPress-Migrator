@@ -3,7 +3,7 @@
  * Plugin Name: WordPress Migrator
  * Plugin URI: https://rickconlee.com/wordpress-migrator
  * Description: This plugin allows you to migrate your site between two different WordPress installs. It is intended for migrating your wordpress site to a new server. 
- * Version: 1.1-dev
+ * Version: 1.1
  * Author: Rick Conlee
  * Author URI: https://rickconlee.com
  * License: GPLv2 or later
@@ -16,34 +16,20 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // Register a custom REST API endpoint.
 add_action( 'rest_api_init', function () {
-    register_rest_route( 'wordpress-migrator/v1', '/backup', array(
+    register_rest_route( 'full-site-backup/v1', '/backup', array(
         'methods' => 'POST',
         'callback' => 'perform_full_backup',
-        'permission_callback' => 'full_site_backup_permission_check'
+        'permission_callback' => function () {
+            return current_user_can( 'manage_options' );
+        }
     ));
 });
 
-function full_site_backup_permission_check( $request ) {
-    $headers = $request->get_headers();
-    if ( isset( $headers['authorization'] ) ) {
-        $auth = $headers['authorization'][0];
-        list( $user, $pass ) = explode( ':', base64_decode( substr( $auth, 6 ) ) );
-
-        if ( $user && $pass ) {
-            $user = wp_authenticate( $user, $pass );
-            if ( ! is_wp_error( $user ) && user_can( $user, 'manage_options' ) ) {
-                return true;
-            }
-        }
-    }
-    return new WP_Error( 'rest_forbidden', __( 'Sorry, you are not allowed to do that.' ), array( 'status' => 401 ) );
-}
-
 function perform_full_backup() {
     $uploads_dir = wp_upload_dir()['basedir'];
-    $backup_dir = $uploads_dir . '/wordpress-migrator';
-    $backup_file = $backup_dir . '/backup.zip';
-    $db_dump_file = $backup_dir . '/database.sql';
+    $backup_dir = $uploads_dir . '/full-site-backup';
+    $backup_file = $backup_dir . '/backup_' . date('Ymd_His') . '.zip';
+    $db_dump_file = $backup_dir . '/database_' . date('Ymd_His') . '.sql';
 
     if ( ! file_exists( $backup_dir ) ) {
         mkdir( $backup_dir, 0755, true );
@@ -121,12 +107,12 @@ function perform_full_backup() {
     }
 
     return array(
-        'backup_url' => wp_upload_dir()['baseurl'] . '/wordpress-migrator/backup.zip',
-        'db_dump_url' => wp_upload_dir()['baseurl'] . '/wordpress-migrator/database.sql'
+        'backup_url' => wp_upload_dir()['baseurl'] . '/full-site-backup/' . basename($backup_file),
+        'db_dump_url' => wp_upload_dir()['baseurl'] . '/full-site-backup/' . basename($db_dump_file)
     );
 }
 
-// Admin page to trigger backup
+// Admin page to trigger backup and display backup files
 add_action('admin_menu', 'wordpress_migrator_admin_menu');
 
 function wordpress_migrator_admin_menu() {
@@ -142,22 +128,55 @@ function wordpress_migrator_admin_menu() {
 }
 
 function wordpress_migrator_admin_page() {
+    $uploads_dir = wp_upload_dir()['basedir'];
+    $backup_dir = $uploads_dir . '/full-site-backup';
+    $backup_files = array_merge(
+        glob($backup_dir . '/*.zip'),
+        glob($backup_dir . '/*.sql')
+    );
+
     ?>
     <div class="wrap">
         <h1><?php esc_html_e( 'WordPress Migrator', 'wordpress-migrator' ); ?></h1>
         <button id="trigger-backup" class="button button-primary"><?php esc_html_e( 'Trigger Backup', 'wordpress-migrator' ); ?></button>
         <div id="backup-status"></div>
+
+        <h2><?php esc_html_e( 'Previous Backups', 'wordpress-migrator' ); ?></h2>
+        <table class="widefat">
+            <thead>
+                <tr>
+                    <th><?php esc_html_e( 'File Name', 'wordpress-migrator' ); ?></th>
+                    <th><?php esc_html_e( 'Date Created', 'wordpress-migrator' ); ?></th>
+                    <th><?php esc_html_e( 'Download', 'wordpress-migrator' ); ?></th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (empty($backup_files)): ?>
+                    <tr>
+                        <td colspan="3"><?php esc_html_e( 'No backups found.', 'wordpress-migrator' ); ?></td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($backup_files as $file): ?>
+                        <tr>
+                            <td><?php echo esc_html( basename($file) ); ?></td>
+                            <td><?php echo esc_html( date('Y-m-d H:i:s', filemtime($file)) ); ?></td>
+                            <td><a href="<?php echo esc_url( wp_upload_dir()['baseurl'] . '/full-site-backup/' . basename($file) ); ?>" target="_blank"><?php esc_html_e( 'Download', 'wordpress-migrator' ); ?></a></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
     </div>
     <script type="text/javascript">
         document.getElementById('trigger-backup').addEventListener('click', function() {
             var statusDiv = document.getElementById('backup-status');
             statusDiv.innerHTML = '<?php esc_html_e( 'Backup in progress...', 'wordpress-migrator' ); ?>';
 
-            fetch('<?php echo esc_url( rest_url( 'wordpress-migrator/v1/backup' ) ); ?>', {
+            fetch('<?php echo esc_url( rest_url( 'full-site-backup/v1/backup' ) ); ?>', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': 'Basic ' + btoa('<?php echo esc_js( wp_get_current_user()->user_login ); ?>:' + prompt('Enter your password:'))
+                    'X-WP-Nonce': '<?php echo wp_create_nonce( 'wp_rest' ); ?>'
                 }
             })
             .then(response => response.json())
@@ -166,6 +185,7 @@ function wordpress_migrator_admin_page() {
                     statusDiv.innerHTML = '<p><?php esc_html_e( 'Backup completed successfully.', 'wordpress-migrator' ); ?></p>' +
                                           '<p><a href="' + data.backup_url + '" target="_blank"><?php esc_html_e( 'Download Backup', 'wordpress-migrator' ); ?></a></p>' +
                                           '<p><a href="' + data.db_dump_url + '" target="_blank"><?php esc_html_e( 'Download Database Dump', 'wordpress-migrator' ); ?></a></p>';
+                    location.reload(); // Reload the page to update the backup files table
                 } else {
                     statusDiv.innerHTML = '<?php esc_html_e( 'Backup failed.', 'wordpress-migrator' ); ?>';
                 }
@@ -178,4 +198,3 @@ function wordpress_migrator_admin_page() {
     </script>
     <?php
 }
-
