@@ -3,7 +3,7 @@
  * Plugin Name: WordPress Migrator
  * Plugin URI: https://rickconlee.com/wordpress-migrator
  * Description: This plugin allows you to migrate your site between two different WordPress installs. It is intended for migrating your wordpress site to a new server. 
- * Version: 1.1
+ * Version: 1.1-dev
  * Author: Rick Conlee
  * Author URI: https://rickconlee.com
  * License: GPLv2 or later
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // Register a custom REST API endpoint.
 add_action( 'rest_api_init', function () {
-    register_rest_route( 'full-site-backup/v1', '/backup', array(
+    register_rest_route( 'wordpress-migrator/v1', '/backup', array(
         'methods' => 'POST',
         'callback' => 'perform_full_backup',
         'permission_callback' => 'full_site_backup_permission_check'
@@ -41,7 +41,7 @@ function full_site_backup_permission_check( $request ) {
 
 function perform_full_backup() {
     $uploads_dir = wp_upload_dir()['basedir'];
-    $backup_dir = $uploads_dir . '/full-site-backup';
+    $backup_dir = $uploads_dir . '/wordpress-migrator';
     $backup_file = $backup_dir . '/backup.zip';
     $db_dump_file = $backup_dir . '/database.sql';
 
@@ -121,8 +121,61 @@ function perform_full_backup() {
     }
 
     return array(
-        'backup_url' => wp_upload_dir()['baseurl'] . '/full-site-backup/backup.zip',
-        'db_dump_url' => wp_upload_dir()['baseurl'] . '/full-site-backup/database.sql'
+        'backup_url' => wp_upload_dir()['baseurl'] . '/wordpress-migrator/backup.zip',
+        'db_dump_url' => wp_upload_dir()['baseurl'] . '/wordpress-migrator/database.sql'
     );
+}
+
+// Admin page to trigger backup
+add_action('admin_menu', 'wordpress_migrator_admin_menu');
+
+function wordpress_migrator_admin_menu() {
+    add_menu_page(
+        'WordPress Migrator',
+        'WP Migrator',
+        'manage_options',
+        'wordpress-migrator',
+        'wordpress_migrator_admin_page',
+        'dashicons-migrate',
+        100
+    );
+}
+
+function wordpress_migrator_admin_page() {
+    ?>
+    <div class="wrap">
+        <h1><?php esc_html_e( 'WordPress Migrator', 'wordpress-migrator' ); ?></h1>
+        <button id="trigger-backup" class="button button-primary"><?php esc_html_e( 'Trigger Backup', 'wordpress-migrator' ); ?></button>
+        <div id="backup-status"></div>
+    </div>
+    <script type="text/javascript">
+        document.getElementById('trigger-backup').addEventListener('click', function() {
+            var statusDiv = document.getElementById('backup-status');
+            statusDiv.innerHTML = '<?php esc_html_e( 'Backup in progress...', 'wordpress-migrator' ); ?>';
+
+            fetch('<?php echo esc_url( rest_url( 'wordpress-migrator/v1/backup' ) ); ?>', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Basic ' + btoa('<?php echo esc_js( wp_get_current_user()->user_login ); ?>:' + prompt('Enter your password:'))
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.backup_url && data.db_dump_url) {
+                    statusDiv.innerHTML = '<p><?php esc_html_e( 'Backup completed successfully.', 'wordpress-migrator' ); ?></p>' +
+                                          '<p><a href="' + data.backup_url + '" target="_blank"><?php esc_html_e( 'Download Backup', 'wordpress-migrator' ); ?></a></p>' +
+                                          '<p><a href="' + data.db_dump_url + '" target="_blank"><?php esc_html_e( 'Download Database Dump', 'wordpress-migrator' ); ?></a></p>';
+                } else {
+                    statusDiv.innerHTML = '<?php esc_html_e( 'Backup failed.', 'wordpress-migrator' ); ?>';
+                }
+            })
+            .catch(error => {
+                statusDiv.innerHTML = '<?php esc_html_e( 'Backup failed.', 'wordpress-migrator' ); ?>';
+                console.error('Error:', error);
+            });
+        });
+    </script>
+    <?php
 }
 
