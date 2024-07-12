@@ -26,17 +26,12 @@ add_action( 'rest_api_init', function () {
 });
 
 function perform_full_backup(WP_REST_Request $request) {
-    $key = $request->get_param('key');
-    if (empty($key)) {
-        return new WP_Error( 'no_encryption_key', __( 'Encryption key is required.' ), array( 'status' => 400 ) );
-    }
-
     $uploads_dir = wp_upload_dir()['basedir'];
+    $site_url = parse_url(get_site_url(), PHP_URL_HOST);
+    $timestamp = date('Ymd_His');
     $backup_dir = $uploads_dir . '/wordpress-migrator';
-    $backup_file = $backup_dir . '/backup_' . date('Ymd_His') . '.zip';
-    $db_dump_file = $backup_dir . '/database_' . date('Ymd_His') . '.sql';
-    $encrypted_db_dump_file = $db_dump_file . '.enc';
-    $encrypted_backup_file = $backup_file . '.enc';
+    $backup_file = $backup_dir . '/' . $site_url . '_backup_' . $timestamp . '.zip';
+    $db_dump_file = $backup_dir . '/' . $site_url . '_database_' . $timestamp . '.sql';
 
     if ( ! file_exists( $backup_dir ) ) {
         mkdir( $backup_dir, 0755, true );
@@ -88,10 +83,6 @@ function perform_full_backup(WP_REST_Request $request) {
         return new WP_Error( 'db_dump_failed', __( 'Database dump failed.' ), array( 'status' => 500 ) );
     }
 
-    // Encrypt the database dump
-    encrypt_file($db_dump_file, $encrypted_db_dump_file, $key);
-    unlink($db_dump_file); // Delete the unencrypted dump file
-
     // Create filesystem dump using ZipArchive
     $zip = new ZipArchive();
     if ($zip->open($backup_file, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== TRUE) {
@@ -118,30 +109,10 @@ function perform_full_backup(WP_REST_Request $request) {
         return new WP_Error( 'backup_failed', __( 'Filesystem backup failed.' ), array( 'status' => 500 ) );
     }
 
-    // Encrypt the backup zip file
-    encrypt_file($backup_file, $encrypted_backup_file, $key);
-    unlink($backup_file); // Delete the unencrypted backup file
-
     return array(
-        'backup_url' => wp_upload_dir()['baseurl'] . '/wordpress-migrator/' . basename($encrypted_backup_file),
-        'db_dump_url' => wp_upload_dir()['baseurl'] . '/wordpress-migrator/' . basename($encrypted_db_dump_file)
+        'backup_url' => wp_upload_dir()['baseurl'] . '/wordpress-migrator/' . basename($backup_file),
+        'db_dump_url' => wp_upload_dir()['baseurl'] . '/wordpress-migrator/' . basename($db_dump_file)
     );
-}
-
-function encrypt_file($input_file, $output_file, $key) {
-    $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length('aes-256-cbc'));
-    $input_handle = fopen($input_file, 'rb');
-    $output_handle = fopen($output_file, 'wb');
-    fwrite($output_handle, base64_encode($iv));
-
-    while (!feof($input_handle)) {
-        $chunk = fread($input_handle, 8192);
-        $encrypted_chunk = openssl_encrypt($chunk, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
-        fwrite($output_handle, base64_encode($encrypted_chunk));
-    }
-
-    fclose($input_handle);
-    fclose($output_handle);
 }
 
 // Admin page to trigger backup and display backup files
@@ -163,14 +134,13 @@ function wordpress_migrator_admin_page() {
     $uploads_dir = wp_upload_dir()['basedir'];
     $backup_dir = $uploads_dir . '/wordpress-migrator';
     $backup_files = array_merge(
-        glob($backup_dir . '/*.zip.enc'),
-        glob($backup_dir . '/*.sql.enc')
+        glob($backup_dir . '/*.zip'),
+        glob($backup_dir . '/*.sql')
     );
 
     ?>
     <div class="wrap">
         <h1><?php esc_html_e( 'WordPress Migrator', 'wordpress-migrator' ); ?></h1>
-        <input type="password" id="encryption-key" placeholder="<?php esc_html_e( 'Enter Encryption Key', 'wordpress-migrator' ); ?>" />
         <button id="trigger-backup" class="button button-primary"><?php esc_html_e( 'Trigger Backup', 'wordpress-migrator' ); ?></button>
         <div id="backup-status"></div>
 
@@ -203,7 +173,6 @@ function wordpress_migrator_admin_page() {
     <script type="text/javascript">
         document.getElementById('trigger-backup').addEventListener('click', function() {
             var statusDiv = document.getElementById('backup-status');
-            var encryptionKey = document.getElementById('encryption-key').value;
             statusDiv.innerHTML = '<?php esc_html_e( 'Backup in progress...', 'wordpress-migrator' ); ?>';
 
             fetch('<?php echo esc_url( rest_url( 'wordpress-migrator/v1/backup' ) ); ?>', {
@@ -211,8 +180,7 @@ function wordpress_migrator_admin_page() {
                 headers: {
                     'Content-Type': 'application/json',
                     'X-WP-Nonce': '<?php echo wp_create_nonce( 'wp_rest' ); ?>'
-                },
-                body: JSON.stringify({ key: encryptionKey })
+                }
             })
             .then(response => response.json())
             .then(data => {
