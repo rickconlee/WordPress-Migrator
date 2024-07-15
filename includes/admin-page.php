@@ -140,6 +140,11 @@ function wordpress_migrator_admin_page()
                 formData.append('backup_file', document.querySelector('input[name="backup_file"]').files[0]);
                 formData.append('db_file', document.querySelector('input[name="db_file"]').files[0]);
 
+                // Log formData content
+                for (var pair of formData.entries()) {
+                    console.log(pair[0]+ ', ' + pair[1]); 
+                }
+
                 fetch('<?php echo esc_url(rest_url('wordpress-migrator/v1/restore')); ?>', {
                     method: 'POST',
                     headers: {

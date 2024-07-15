@@ -13,7 +13,7 @@ add_action('rest_api_init', function () {
         'callback' => 'restore_backup',
         'permission_callback' => function () {
             return current_user_can('manage_options');
-        },
+        ),
         'args' => array(
             'backup_file' => array(
                 'required' => true,

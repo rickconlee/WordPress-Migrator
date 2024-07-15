@@ -4,6 +4,9 @@ function restore_backup(WP_REST_Request $request)
 {
     wordpress_migrator_log('Starting restore process.');
 
+    // Log request details
+    error_log(print_r($request, true));
+    
     $uploads_dir = wp_upload_dir()['basedir'] . '/wordpress-migrator/';
     $backup_file = $request->get_file_params()['backup_file'];
     $db_file = $request->get_file_params()['db_file'];
